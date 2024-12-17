@@ -2,231 +2,213 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>WebRTC Video Chat</title>
+    <title>Video Chat Room</title>
     <style>
         body {
             font-family: Arial, sans-serif;
-            max-width: 800px;
+            max-width: 1200px;
             margin: 0 auto;
             padding: 20px;
             text-align: center;
+            background-color: #f0f0f0;
+        }
+        #video-grid {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 20px;
         }
         .video-container {
+            background-color: black;
             display: flex;
-            justify-content: center;
-            gap: 20px;
-            margin-bottom: 20px;
+            flex-direction: column;
+            width: 300px;
+            max-width: 100%;
         }
         video {
-            width: 45%;
-            background-color: #000;
+            width: 100%;
+            height: auto;
+            object-fit: cover;
         }
-        #localVideo, #remoteVideo {
-            max-width: 480px;
-            max-height: 360px;
+        #controls {
+            margin: 20px 0;
         }
-        .connection-controls {
-            margin-bottom: 20px;
+        button {
+            margin: 10px;
+            padding: 10px 20px;
+            font-size: 16px;
         }
-        #connectionStatus {
-            margin: 10px 0;
-            font-weight: bold;
+        #username-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
         }
-        #chatMessages {
-            border: 1px solid #ccc;
-            height: 200px;
-            overflow-y: scroll;
-            margin-bottom: 10px;
-            text-align: left;
-            padding: 10px;
-        }
-        #messageInput {
-            width: 70%;
-            padding: 5px;
-            margin-right: 10px;
+        #username-form {
+            background-color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
         }
     </style>
 </head>
 <body>
-    <h1>WebRTC Video Chat</h1>
+    <h1>Video Chat Room</h1>
 
-    <div class="connection-controls">
-        <input type="text" id="roomInput" placeholder="Enter Room Name">
-        <button id="createRoomBtn">Create Room</button>
-        <button id="joinRoomBtn">Join Room</button>
+    <div id="username-modal">
+        <div id="username-form">
+            <h2>Enter Your Name</h2>
+            <input type="text" id="username-input" placeholder="Your Name">
+            <button id="join-btn">Join Room</button>
+        </div>
     </div>
 
-    <div id="connectionStatus">Status: Not Connected</div>
-
-    <div class="video-container">
-        <video id="localVideo" autoplay playsinline muted></video>
-        <video id="remoteVideo" autoplay playsinline></video>
+    <div id="controls">
+        <button id="toggle-camera">Toggle Camera</button>
+        <button id="toggle-mic">Toggle Microphone</button>
+        <button id="share-screen">Share Screen</button>
     </div>
 
-    <div id="chatMessages"></div>
-    <input type="text" id="messageInput" placeholder="Type a message...">
-    <button id="sendMessageBtn">Send</button>
+    <div id="video-grid"></div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.4.1/socket.io.js"></script>
+    <script src="https://unpkg.com/peerjs@1.3.2/dist/peerjs.min.js"></script>
     <script>
-        // DOM Elements
-        const localVideo = document.getElementById('localVideo');
-        const remoteVideo = document.getElementById('remoteVideo');
-        const roomInput = document.getElementById('roomInput');
-        const createRoomBtn = document.getElementById('createRoomBtn');
-        const joinRoomBtn = document.getElementById('joinRoomBtn');
-        const connectionStatus = document.getElementById('connectionStatus');
-        const chatMessages = document.getElementById('chatMessages');
-        const messageInput = document.getElementById('messageInput');
-        const sendMessageBtn = document.getElementById('sendMessageBtn');
+        const videoGrid = document.getElementById('video-grid');
+        const usernameModal = document.getElementById('username-modal');
+        const usernameInput = document.getElementById('username-input');
+        const joinBtn = document.getElementById('join-btn');
+        const toggleCameraBtn = document.getElementById('toggle-camera');
+        const toggleMicBtn = document.getElementById('toggle-mic');
+        const shareScreenBtn = document.getElementById('share-screen');
 
-        // WebRTC and Firebase configuration
-        const configuration = {
-            iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { 
-                    urls: 'turn:openrelay.metered.ca:80',
-                    username: 'openrelayproject',
-                    credential: 'openrelayproject'
-                }
-            ]
+        let myUsername = '';
+        let myPeerId = '';
+        let myVideoStream;
+        const peers = {};
+
+        // Socket setup (simulated - would normally connect to a server)
+        const socket = {
+            emit: function() {},
+            on: function() {}
         };
 
-        let localStream = null;
-        let peerConnection = null;
-        let dataChannel = null;
-
-        // Initialize local media
-        async function initializeMedia() {
-            try {
-                localStream = await navigator.mediaDevices.getUserMedia({
-                    video: true,
-                    audio: true
-                });
-                localVideo.srcObject = localStream;
-            } catch (err) {
-                console.error('Error accessing media devices:', err);
-                alert('Could not access camera and microphone');
-            }
-        }
-
-        // Create WebRTC peer connection
-        function createPeerConnection() {
-            peerConnection = new RTCPeerConnection(configuration);
-
-            // Add local stream tracks to peer connection
-            if (localStream) {
-                localStream.getTracks().forEach(track => {
-                    peerConnection.addTrack(track, localStream);
-                });
-            }
-
-            // Create data channel for text chat
-            dataChannel = peerConnection.createDataChannel('chat');
-            setupDataChannel(dataChannel);
-
-            // Handle incoming tracks
-            peerConnection.ontrack = (event) => {
-                remoteVideo.srcObject = event.streams[0];
-            };
-
-            // ICE candidate handling
-            peerConnection.onicecandidate = (event) => {
-                if (event.candidate) {
-                    // In a real implementation, you'd send this to the other peer
-                    console.log('ICE candidate:', event.candidate);
-                }
-            };
-
-            return peerConnection;
-        }
-
-        // Setup data channel for messaging
-        function setupDataChannel(channel) {
-            channel.onopen = () => {
-                connectionStatus.textContent = 'Status: Connected';
-                sendMessageBtn.disabled = false;
-            };
-
-            channel.onmessage = (event) => {
-                const messageElement = document.createElement('div');
-                messageElement.textContent = `Peer: ${event.data}`;
-                chatMessages.appendChild(messageElement);
-                chatMessages.scrollTop = chatMessages.scrollHeight;
-            };
-
-            channel.onclose = () => {
-                connectionStatus.textContent = 'Status: Disconnected';
-                sendMessageBtn.disabled = true;
-            };
-        }
-
-        // Create room (offer)
-        async function createRoom() {
-            if (!localStream) await initializeMedia();
-            
-            const peerConnection = createPeerConnection();
-            
-            try {
-                const offer = await peerConnection.createOffer();
-                await peerConnection.setLocalDescription(offer);
-                
-                // In a real app, you'd use a signaling server to share this offer
-                console.log('Offer created:', offer);
-                alert('Room created! Share the room name and offer with the other participant.');
-            } catch (err) {
-                console.error('Error creating room:', err);
-            }
-        }
-
-        // Join room (answer)
-        async function joinRoom() {
-            if (!localStream) await initializeMedia();
-            
-            const peerConnection = createPeerConnection();
-            
-            // In a real app, you'd receive the offer from a signaling server
-            // This is a placeholder for demonstration
-            const offer = prompt('Paste the offer from the room creator:');
-            
-            try {
-                await peerConnection.setRemoteDescription(new RTCSessionDescription(JSON.parse(offer)));
-                
-                const answer = await peerConnection.createAnswer();
-                await peerConnection.setLocalDescription(answer);
-                
-                // In a real app, you'd send this answer back to the room creator
-                console.log('Answer created:', answer);
-                alert('Joined room! Send the answer back to the room creator.');
-            } catch (err) {
-                console.error('Error joining room:', err);
-            }
-        }
-
-        // Send message via data channel
-        function sendMessage() {
-            const message = messageInput.value;
-            if (message && dataChannel && dataChannel.readyState === 'open') {
-                dataChannel.send(message);
-                
-                const messageElement = document.createElement('div');
-                messageElement.textContent = `You: ${message}`;
-                chatMessages.appendChild(messageElement);
-                chatMessages.scrollTop = chatMessages.scrollHeight;
-                
-                messageInput.value = '';
-            }
-        }
-
-        // Event Listeners
-        createRoomBtn.addEventListener('click', createRoom);
-        joinRoomBtn.addEventListener('click', joinRoom);
-        sendMessageBtn.addEventListener('click', sendMessage);
-        messageInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') sendMessage();
+        // Peer connection setup
+        const peer = new Peer(undefined, {
+            host: '/',
+            port: '9000'
         });
 
-        // Initialize media on page load
-        initializeMedia();
+        // Username entry
+        joinBtn.addEventListener('click', () => {
+            myUsername = usernameInput.value.trim();
+            if (myUsername) {
+                usernameModal.style.display = 'none';
+                initializeRoom();
+            }
+        });
+
+        function initializeRoom() {
+            // Get user media
+            navigator.mediaDevices.getUserMedia({
+                video: true,
+                audio: true
+            }).then(stream => {
+                myVideoStream = stream;
+                addVideoStream(myVideoStream, myUsername, true);
+
+                // Listen for incoming calls
+                peer.on('call', call => {
+                    call.answer(stream);
+                    call.on('stream', userVideoStream => {
+                        if (!peers[call.peer]) {
+                            addVideoStream(userVideoStream, 'Anonymous', false);
+                            peers[call.peer] = call;
+                        }
+                    });
+                });
+
+                // Simulated peer connection (in a real app, this would be handled by a signaling server)
+                peer.on('open', id => {
+                    myPeerId = id;
+                    // In a real implementation, you'd broadcast your ID to other users
+                });
+            }).catch(error => {
+                console.error('Error accessing media devices:', error);
+                alert('Could not access camera or microphone: ' + error.message);
+            });
+        }
+
+        function addVideoStream(stream, username, isLocalStream) {
+            const videoContainer = document.createElement('div');
+            videoContainer.classList.add('video-container');
+
+            const video = document.createElement('video');
+            video.srcObject = stream;
+            video.muted = isLocalStream; // Mute local stream
+            video.addEventListener('loadedmetadata', () => {
+                video.play();
+            });
+
+            const nameLabel = document.createElement('div');
+            nameLabel.textContent = username + (isLocalStream ? ' (You)' : '');
+            nameLabel.style.color = 'white';
+            nameLabel.style.padding = '5px';
+            nameLabel.style.backgroundColor = 'rgba(0,0,0,0.5)';
+
+            videoContainer.appendChild(video);
+            videoContainer.appendChild(nameLabel);
+            videoGrid.appendChild(videoContainer);
+
+            return videoContainer;
+        }
+
+        // Toggle camera
+        toggleCameraBtn.addEventListener('click', () => {
+            const videoTrack = myVideoStream.getVideoTracks()[0];
+            videoTrack.enabled = !videoTrack.enabled;
+            toggleCameraBtn.textContent = videoTrack.enabled ? 'Turn Off Camera' : 'Turn On Camera';
+        });
+
+        // Toggle microphone
+        toggleMicBtn.addEventListener('click', () => {
+            const audioTrack = myVideoStream.getAudioTracks()[0];
+            audioTrack.enabled = !audioTrack.enabled;
+            toggleMicBtn.textContent = audioTrack.enabled ? 'Mute' : 'Unmute';
+        });
+
+        // Screen sharing
+        shareScreenBtn.addEventListener('click', () => {
+            navigator.mediaDevices.getDisplayMedia({video: true})
+                .then(screenStream => {
+                    const videoTrack = screenStream.getVideoTracks()[0];
+                    
+                    // Replace video track in existing stream
+                    const existingVideoTrack = myVideoStream.getVideoTracks()[0];
+                    myVideoStream.removeTrack(existingVideoTrack);
+                    myVideoStream.addTrack(videoTrack);
+
+                    // Update local video
+                    document.querySelector('video').srcObject = myVideoStream;
+
+                    // Handle screen share end
+                    videoTrack.onended = () => {
+                        myVideoStream.removeTrack(videoTrack);
+                        myVideoStream.addTrack(existingVideoTrack);
+                        document.querySelector('video').srcObject = myVideoStream;
+                    };
+                })
+                .catch(error => {
+                    console.error('Error sharing screen:', error);
+                });
+        });
     </script>
 </body>
 </html>
